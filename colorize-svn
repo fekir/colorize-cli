@@ -1,0 +1,263 @@
+#!/usr/bin/sh
+
+# Copyright (c) 2020 Federico Kircheis
+
+# Permission to use, copy, modify, and distribute this software for any
+# purpose with or without fee is hereby granted, provided that the above
+# copyright notice and this permission notice appear in all copies.
+#
+# THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+# WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+# MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+# ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+# WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+# ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+# OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+set -o errexit
+set -o nounset
+
+colorize_log='
+    if($1=="------------------------------------------------------------------------"){ 
+        log_title=1; 
+        print;
+        next;
+    } else if(log_title == 1){ 
+        n=split($0,field," ",sep)
+        field[1]=sprintf("%s%s%s", yellow, field[1], reset);
+        field[3]=sprintf("%s%s%s", light_blue, field[3], reset);
+        field[5]=sprintf("%s%s%s", green, field[5], reset);
+        field[6]=sprintf("%s%s%s", green, field[6], reset);
+        field[7]=sprintf("%s%s%s", green, field[7], reset);
+        field[8]=sprintf("%s%s%s", green, field[8], reset);
+        field[9]=sprintf("%s%s%s", green, field[9], reset);
+        field[10]=sprintf("%s%s%s", green, field[10], reset);
+        field[11]=sprintf("%s%s%s", green, field[11], reset);
+        field[n-1]=sprintf("%s%s%s", light_blue, field[n-1], reset);
+        field[n]=sprintf("%s%s%s", light_blue, field[n], reset);
+        line=sep[0];
+        for (i=1;i<=n; i++) line=(line field[i] sep[i]);
+        print line;
+        log_title=2;
+    }
+';
+
+# annotate <id> <author> <content...>
+# annotate -v -g <id> <author> <date with spaces> <content...>
+colorize_annotate='
+  {
+    n=split($0,field," ",sep)
+    field[1]=sprintf("%s%s%s", red,   field[1], reset);
+    field[2]=sprintf("%s%s%s", green, field[2], reset);
+    line=sep[0];
+    for (i=1;i<=n; i++) line=(line field[i] sep[i]);
+    print line;
+  }
+';
+
+colorize_diff='
+    if ($1=="Index:"){
+      # skip, just takes space away
+    } else if( $1=="+++" || $1=="---") {
+      print green $0 reset;
+    } else if ($1=="@@") {
+      print yellow $0 reset;
+    } else if ($0 ~ /^\+/) {
+      print green2 $0 reset;
+    } else if ($0 ~ /^\-/) {
+      print red2 $0 reset;
+    }
+';
+
+colorize_files='
+      if ($1=="C") {
+        file_confl=file_confl+1;
+        print red $0 reset;
+      }
+      else if ($1=="M") {
+        print light_blue $0 reset;
+      }
+      else if ($1=="A") {
+        print green $0 reset;
+      }
+      else if ($1=="?") {
+        print;
+      }
+      else if ($1=="D") {
+        print red $0 reset;
+      }
+      else if ($1=="U") {
+        print light_blue $0 reset;
+      }
+      else if ($1=="G") {
+        file_merged=file_merged+1;
+        print yellow $0 reset;
+      }
+      else if ($1=="X") {
+        print yellow $0 reset;
+      }
+      else if ($1=="!") {
+        file_miss=file_miss+1;
+        print red $0 reset;
+      }
+      else if ($1=="At" || $1 == "External" || $1 == "Updated") {
+        print yellow $0 reset;
+      }
+';
+
+begin='
+  BEGIN {
+    RS="\r?\n"
+
+    reset="\033[00m";
+    red="\033[31m";
+    red2="\033[1;31m";
+    green="\033[32m";
+    green2="\033[1;32m";
+    yellow="\033[33m";
+    light_purple="\033[35m";
+    light_blue="\033[36m";
+    cyan="\033[1;35m"
+
+    log_title=0
+    file_miss=0;
+    file_merged=0;
+    file_confl=0;
+  }
+';
+
+end='
+  END {
+    if (file_merged != 0 || file_miss != 0 || file_confl != 0) {
+      print cyan "====================================" reset;
+    }
+    if (file_merged != 0) {
+      print yellow, file_merged, reset, " merged files";
+    }
+    if (file_miss != 0) {
+      print red, file_miss, reset, " missing files";
+    }
+    if (file_confl != 0) {
+      print red, file_confl, reset, " conflicts";
+    }
+  }
+';
+
+
+help(){
+  printf '%s\n\n' "${0##*/}";
+  printf 'Colorizes by default the output of most svn commands (svn blame excluded).\n'
+  printf 'Colorized output can be forced with the env variable COLORIZE_SVN_FORCE, otherwise if the output is not a console, colorizing is skipped\n';
+  printf 'For avoiding false positives it is possible to enable and disable some filters.\n';
+  printf 'Enabling explicitely the log and diff filter alos activate the pager\n';
+  printf '\nParameters:\n';
+  printf '\t-h|h|--help|help|?  This message\n';
+  printf '\t--annotate          Suppose input is output of svn blame\n';
+  printf '\t--no-diff           Do not colorize diff\n';
+  printf '\t--diff              Colorize diff (and activates pager)\n';
+  printf '\t--no-log            Do not colorize log\n';
+  printf '\t--log               Colorize log (and activates pager)\n';
+  printf '\t--no-files          Do not colorize files\n';
+  printf '\t--files             Colorize files\n';
+  printf '\t--no-pager          Do not activate pager\n';
+  printf '\t--pager             Activate pager\n';
+  printf '\t--pager-only        Activate pager, do not colorize anything\n';
+}
+
+main () {
+  if [ ! -t 1 ] && [ -z ${COLORIZE_SVN_FORCE+x} ]; then :;
+    exec cat;
+  fi
+  parse_annotate=false;
+  parse_log=true;
+  parse_files=true;
+  parse_diff=true;
+  page_content=false;
+  page_only=false;
+
+  while test $# -gt 0; do :;
+    key="$1";
+    case "$key" in
+      -h|h|--help|help|\?)
+        help;
+        exit 0;
+        ;;
+      --page-only)
+        page_only=true;
+        break;
+        ;;
+      --annotate)
+        parse_annotate=true;
+        break;
+        ;;
+      --no-diff)
+        parse_diff=false;
+        ;;
+      --diff)
+        parse_diff=true;
+        page_content=true;
+        ;;
+      --no-log)
+        parse_log=false;
+        ;;
+      --log)
+        parse_log=true;
+        page_content=true;
+        ;;
+      --no-files)
+        parse_files=false;
+        ;;
+      --files)
+        parse_files=true;
+        page_content=true;
+        ;;
+      --pager)
+        page_content=true;
+        ;;
+      --no-pager)
+        page_content=false;
+        ;;
+      *)
+        printf 'Unrecognized parameter: "%s"\n' "$key" >&2;
+        exit 1;;
+      esac
+    shift;
+  done;
+
+
+  PAGER="${PAGER:-less}"
+  if [ "$PAGER" = "less" ]; then
+    PAGEROPTS="--RAW-CONTROL-CHARS --quit-if-one-screen";
+  else
+    PAGEROPTS=
+  fi
+
+  if $page_only ; then :;
+    "$PAGER" $PAGEROPTS;
+    return;
+  fi
+
+  if $parse_annotate ; then :;
+    awk "$begin $colorize_annotate" | "$PAGER" $PAGEROPTS;
+    return;
+  fi
+
+  internal_command="";
+  if $parse_log; then :;
+    internal_command="$internal_command $colorize_log else ";
+  fi
+  if $parse_files; then :;
+    internal_command="$internal_command $colorize_files else ";
+  fi
+  if $parse_diff; then :;
+    internal_command="$internal_command $colorize_diff else ";
+  fi
+
+  if $page_content; then :;
+    exec awk "$begin {$internal_command {print;} } $end" | "$PAGER" $PAGEROPTS;
+  else :;
+    exec awk "$begin {$internal_command {print;} } $end";
+  fi
+}
+
+main "$@";
