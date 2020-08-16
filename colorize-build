@@ -1,0 +1,81 @@
+#!/usr/bin/awk -f
+
+# Copyright (c) 2020 Federico Kircheis
+
+# Permission to use, copy, modify, and distribute this software for any
+# purpose with or without fee is hereby granted, provided that the above
+# copyright notice and this permission notice appear in all copies.
+#
+# THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+# WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+# MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+# ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+# WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+# ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+# OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+ # "Generic" wrapper for building software with GCC/clang/cl.exe and CMake
+
+BEGIN {
+	count_vcxproj=0
+	count_err=0;
+	count_warn=0;
+	cmake_count_warn=0;
+
+	it_arr[0] = "/"
+	it_arr[1] = "-"
+	it_arr[2] = "\\"
+	it_arr[3] = "|"
+}
+
+/Copyright \(C\)|Cmake does not need to run/{
+	next;
+}
+/\.vcxproj -> /{
+	count_vcxproj++;
+	printf "[" it_arr[ count_vcxproj % 4] " " count_vcxproj "] " $1 "                                                 \r";
+	next;
+}
+/: error C.| : error LNK|: error MSB|: fatal error LNK|^cl : Command line error/{
+	count_err++;
+	$NF="";
+	print "\033[31m" $0 "\033[00m";
+	next;
+}
+/: warning C.|: warning LNK|: warning MSB/{
+	count_warn++;
+	$NF="";
+	print "\033[33m" $0 "\033[00m";
+	next;
+}
+/^CMake Deprecation Warning|^CMake Warning|-- Could NOT find |WARNING: /{
+	cmake_count_warn++;
+	print "\033[33m" $0 "\033[00m";
+	next;
+}
+/: note: /{
+	print "\033[36m" $0 "\033[00m";
+	next;
+}
+#gcc/clang syntax, FAILED seems to be of cmake
+/: error: |^FAILED: |subcommand failed\./{
+	print "\033[31m" $0 "\033[00m";
+	next;
+}
+/^ninja: no work to do\./{
+	print "\033[36m" $0 "\033[00m";
+	next;
+}
+{print;}
+
+END {
+	if( count_vcxproj != 0) {
+		print "\n\033[35mGone through " count_vcxproj " vcxproj.\033[00m";
+	}
+	if (count_err != 0 || count_warn != 0 || cmake_count_warn != 0) {
+		print "\n\033[35m----------------------------------------";
+		print   "\033[31m" count_err        " errors";
+		print   "\033[33m" count_warn       " warnings";
+		print   "\033[33m" cmake_count_warn " cmake warnings\033[00m";
+	}
+}
