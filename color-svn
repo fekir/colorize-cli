@@ -35,7 +35,7 @@ main () {
     svn update --non-interactive "$@" | colorize-svn;
     return;
   elif [ "$1" = "st" ] || [ "$1" = "stat" ] || [ "$1" = "status" ] ; then :;
-    svn "$@" | LC_ALL=C sort | colorize-svn --files --no-log --no-diff;
+    svn "$@" | LC_ALL=C sort | sed 's|\\|/|' | colorize-svn --files --no-log --no-diff;
     return;
   elif [ "$1" = "diff" ] || [ "$1" = "di" ] ; then :;
     svn "$@" | colorize-svn --diff --no-log --no-files;
@@ -47,7 +47,7 @@ main () {
          return;
       fi
      done
-    svn "$@" |  colorize-svn --log --no-diff;
+    svn "$@" | colorize-svn --log --no-diff;
     return;
   elif [ "$1" = "annotate" ] || [ "$1" = "ann" ] \
     || [ "$1" = "praise" ] || [ "$1" = "blame" ] ; then :;
